@@ -1,0 +1,27 @@
+# Terraform state & crash logs
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+
+# Local provider/module caches
+.terraform/
+.terraform.lock.hcl
+
+# Variable files that may hold environment-specific values
+*.tfvars
+*.tfvars.json
+!example.tfvars
+
+# Plan output
+*.tfplan
+
+# SAML IdP metadata (download per-environment; not committed)
+google-idp-metadata*.xml
+
+# Exported VPN client profiles
+*.ovpn
+
+# Editor / OS noise
+.DS_Store
+*.swp
