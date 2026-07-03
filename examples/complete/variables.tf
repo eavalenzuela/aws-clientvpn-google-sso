@@ -19,3 +19,9 @@ variable "dns_servers" {
   type        = list(string)
   default     = []
 }
+
+variable "alarm_sns_topic_arns" {
+  description = "SNS topics notified by the authentication-failure alarm."
+  type        = list(string)
+  default     = []
+}

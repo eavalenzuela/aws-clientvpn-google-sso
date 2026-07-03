@@ -291,10 +291,14 @@ terraform apply
 | `aws_iam_saml_provider.vpn` | Uploads Google's primary IdP metadata |
 | `aws_iam_saml_provider.self_service` | Optional — backs the self-service portal |
 | `aws_cloudwatch_log_group.vpn` | Connection logs (default on) |
+| `aws_security_group.vpn` | Optional — dedicated SG for the endpoint ENIs (`create_security_group`) |
 | `aws_ec2_client_vpn_endpoint.this` | The endpoint, `type = federated-authentication` |
 | `aws_ec2_client_vpn_network_association.this` | One association per target subnet |
 | `aws_ec2_client_vpn_authorization_rule.per_group` | One rule per (group, CIDR) pair |
+| `aws_ec2_client_vpn_authorization_rule.all_groups` | Optional catch-all rules (`authorize_all_groups_cidrs`) |
 | `aws_ec2_client_vpn_route.additional` | Explicit routes for out-of-VPC CIDRs |
+| `aws_cloudwatch_query_definition.*` | Saved Logs Insights queries: connection attempts & failures |
+| `aws_cloudwatch_metric_alarm.auth_failures` | Optional alarm on SAML `AuthenticationFailures` |
 
 ### Apply ordering
 
@@ -317,10 +321,11 @@ Each `(group, cidr)` pair in `group_access` becomes one
   contains it **and** that rule's `access_group_id` is in the user's `memberOf`.
 - Rules are **allow-only**; there is no explicit deny. The absence of a matching
   rule is the deny.
-- To grant **all authenticated users** access to a CIDR, you'd use a rule with
-  `authorize_all_groups = true` and no `access_group_id`. This module
-  intentionally does not expose that for `group_access` entries — every entry is
-  group-scoped. (Add a dedicated rule outside the module if you need a catch-all.)
+- To grant **all authenticated users** access to a CIDR, list it in
+  `authorize_all_groups_cidrs` — each entry becomes a rule with
+  `authorize_all_groups = true` and no `access_group_id`. Every `group_access`
+  entry stays group-scoped; reserve the catch-all list for genuinely universal
+  destinations (e.g. the internal DNS resolver).
 
 ### Routing (can a packet physically get there)
 
@@ -366,6 +371,10 @@ aws ec2 export-client-vpn-client-configuration \
   --client-vpn-endpoint-id "$(terraform output -raw endpoint_id)" \
   --output text > corp.ovpn
 ```
+
+(The module also emits the exact command as the `export_client_config_command`
+output — `terraform output -raw export_client_config_command` prints it ready
+to paste.)
 
 Distribution options:
 
@@ -420,6 +429,11 @@ is authoritative; your Terraform must match it.
    LG="$(terraform output -raw connection_log_group)"
    aws logs tail "$LG" --since 15m --format short
    ```
+
+   In the console, the module also saves two **Logs Insights** queries —
+   `clientvpn/<name>/connection-attempts` and
+   `clientvpn/<name>/connection-failures` — so the same inspection is one click
+   under *CloudWatch → Logs Insights → Saved queries*.
 
    A connection record looks roughly like:
 
@@ -482,8 +496,17 @@ until you tear the old endpoint down, so you can pause the cutover at any point.
 - **Least privilege via groups**: prefer many narrow groups over one broad one.
   Each `group_access` entry should map to a real need-to-reach.
 - **Restrict the endpoint with security groups**: set `vpc_id` +
-  `security_group_ids` so VPN client traffic is constrained by SG rules on the
-  ENIs, in addition to authorization rules.
+  `create_security_group = true` (or pass your own via `security_group_ids`) so
+  VPN client traffic is constrained by SG rules on the ENIs, in addition to
+  authorization rules. The `security_group_id` output lets workload SGs allow
+  VPN traffic **by reference** instead of by CIDR.
+- **Custom connect-time checks**: point `client_connect_lambda_arn` at an
+  `AWSClientVPN-*` Lambda to enforce device posture, banned source IPs, or
+  time-of-day rules before a tunnel is established.
+- **Alert on authentication failures**: `create_auth_failure_alarm = true`
+  (with an SNS topic in `alarm_actions`) alarms on the endpoint's
+  `AuthenticationFailures` metric — the early-warning signal for group-mapping
+  drift, expired IdP metadata, and brute-force attempts.
 - **Split tunnel vs. full tunnel**: split tunnel (default) keeps non-corp
   traffic off the VPN (less cost, better UX). Use full tunnel only if you must
   inspect/route all egress.
@@ -507,7 +530,9 @@ until you tear the old endpoint down, so you can pause the cutover at any point.
 | Add an AZ / more bandwidth | Add the subnet ID to `target_subnet_ids`; `apply`. (Raises cost — section 14.) |
 | Rotate the server cert | Replace the ACM cert; update `server_certificate_arn`; `apply`. |
 | Re-download IdP metadata after a Google cert rotation | Download fresh metadata from the SAML app; replace the XML file; `apply` (updates the IAM SAML provider). |
-| Audit who connected | `aws logs tail` the connection log group; cross-check Google SAML audit log. |
+| Audit who connected | `aws logs tail` the connection log group, or run the saved Logs Insights query `clientvpn/<name>/connection-attempts`; cross-check Google SAML audit log. |
+| Investigate failed connections | Run the saved Logs Insights query `clientvpn/<name>/connection-failures` (shows the failure reason per attempt). |
+| Grant everyone a universal destination | Add the CIDR to `authorize_all_groups_cidrs` (and `additional_route_cidrs` if out-of-VPC); `apply`. |
 
 ---
 

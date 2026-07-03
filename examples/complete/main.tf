@@ -39,10 +39,18 @@ module "clientvpn" {
     "ops@yourco.com" = ["10.0.0.0/16"]
   }
 
+  # Every authenticated user may reach the internal resolver.
+  authorize_all_groups_cidrs = ["10.0.0.2/32"]
+
   # Routes for destinations outside the associated subnet's own VPC CIDR.
   additional_route_cidrs = ["10.0.0.0/16"]
 
   split_tunnel = true
+
+  # Alert on SAML authentication failures (group-mapping drift, brute force).
+  create_auth_failure_alarm    = true
+  auth_failure_alarm_threshold = 5
+  alarm_actions                = var.alarm_sns_topic_arns
 
   tags = {
     Team        = "platform"
@@ -60,4 +68,8 @@ output "self_service_portal_url" {
 
 output "connection_log_group" {
   value = module.clientvpn.connection_log_group
+}
+
+output "export_client_config_command" {
+  value = module.clientvpn.export_client_config_command
 }
